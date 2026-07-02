@@ -16,12 +16,15 @@ body{
   background:#111118;border-radius:24px;padding:24px;
   border:1px solid #1e1e2a;
   box-shadow:0 0 40px rgba(0,255,136,.06);
+  position:relative;
 }
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:0 4px}
 .title{font-size:20px;font-weight:700;color:#00ff88;letter-spacing:.5px}
 .sc{font-size:14px;color:#888}
 .sc strong{color:#eee;font-variant-numeric:tabular-nums}
-.hi strong{color:#ffd700}
+.hi strong{color:#ffd700;transition:color .3s}
+.hi strong.hi-new{color:#ff4466;animation:pulse .5s ease-in-out 3}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.3)}}
 canvas{
   display:block;width:400px;height:400px;border-radius:12px;
   background:#0d0d16;box-shadow:inset 0 0 30px rgba(0,0,0,.5);
@@ -31,12 +34,25 @@ canvas{
 .st{font-size:14px;color:#888}
 .st.on{color:#00ff88}
 .st.dead{color:#ff4466}
+.st.paused{color:#ffaa00}
 #rb{
   background:#1e1e2e;border:1px solid #2a2a3e;color:#ccc;
   padding:8px 20px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;
   transition:all .2s;
 }
 #rb:hover{background:#00ff88;color:#0a0a0f;border-color:#00ff88;box-shadow:0 0 20px rgba(0,255,136,.2)}
+/* Game Over overlay */
+.gover{
+  display:none;position:absolute;inset:0;border-radius:24px;
+  background:rgba(0,0,0,.75);backdrop-filter:blur(6px);
+  justify-content:center;align-items:center;flex-direction:column;gap:6px;
+  z-index:10;
+}
+.gover.show{display:flex}
+.gover .gtitle{font-size:28px;font-weight:800;color:#ff4466;text-shadow:0 0 30px rgba(255,68,102,.4)}
+.gover .gscore{font-size:16px;color:#ccc;margin-top:4px}
+.gover .gbest{font-size:14px;color:#ffd700}
+.gover .ghint{font-size:13px;color:#666;margin-top:8px}
 .dpad{display:none;justify-content:center;margin-top:14px}
 .dg{display:grid;grid-template-columns:52px 52px 52px;grid-template-rows:52px 52px 52px;gap:4px}
 .db{
@@ -60,22 +76,28 @@ canvas{
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="wrap" id="wrap">
   <div class="top">
     <div class="title">SNAKE</div>
     <div class="sc">Score: <strong id="sc">0</strong> <span class="hi">Best: <strong id="hi">0</strong></span></div>
   </div>
   <canvas id="c" width="400" height="400"></canvas>
+  <div class="gover" id="gover">
+    <div class="gtitle">GAME OVER</div>
+    <div class="gscore">Score: <strong id="gsc">0</strong></div>
+    <div class="gbest" id="gbest"></div>
+    <div class="ghint">Press <b>R</b> or tap Restart</div>
+  </div>
   <div class="btm">
     <div class="st" id="st">arrows to move</div>
     <button id="rb">Restart</button>
   </div>
   <div class="dpad">
     <div class="dg">
-      <button class="db du" data-d="up">^</button>
-      <button class="db dl" data-d="left">&lt;</button>
-      <button class="db dr" data-d="right">&gt;</button>
-      <button class="db dd" data-d="down">v</button>
+      <button class="db du" data-d="up">▲</button>
+      <button class="db dl" data-d="left">◀</button>
+      <button class="db dr" data-d="right">▶</button>
+      <button class="db dd" data-d="down">▼</button>
     </div>
   </div>
 </div>
@@ -83,8 +105,9 @@ canvas{
 (function(){
   var c=document.getElementById('c'),ctx=c.getContext('2d');
   var scEl=document.getElementById('sc'),hiEl=document.getElementById('hi'),stEl=document.getElementById('st');
+  var gover=document.getElementById('gover'),gscEl=document.getElementById('gsc'),gbestEl=document.getElementById('gbest');
   var G=20,SZ=400,CS=SZ/G;
-  var snake,food,dir,nextDir,score,hi,loop,run,speed;
+  var snake,food,dir,nextDir,score,hi,loop,run,speed,paused;
 
   hi=parseInt(localStorage.getItem('snakeHi'))||0;hiEl.textContent=hi;
 
@@ -100,50 +123,79 @@ canvas{
     food=p;
   }
 
-  function draw(){
-    ctx.clearRect(0,0,SZ,SZ);
-    // grid
+  function drawGrid(){
     ctx.strokeStyle='#161622';ctx.lineWidth=.5;
     for(var i=0;i<=G;i++){
       ctx.beginPath();ctx.moveTo(i*CS,0);ctx.lineTo(i*CS,SZ);ctx.stroke();
       ctx.beginPath();ctx.moveTo(0,i*CS);ctx.lineTo(SZ,i*CS);ctx.stroke();
     }
-    // food
+  }
+
+  function drawFood(){
+    ctx.shadowColor='#ff4466';ctx.shadowBlur=15;
     ctx.fillStyle='#ff4466';
-    ctx.shadowColor='#ff4466';ctx.shadowBlur=12;
     ctx.beginPath();ctx.arc(food.x*CS+CS/2,food.y*CS+CS/2,CS/2-2,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;
-    // snake
+  }
+
+  function drawSnake(){
     for(var i=snake.length-1;i>=0;i--){
-      var s=snake[i];
-      var pad=i===0?1:2;
-      var x=s.x*CS+pad,y=s.y*CS+pad,w=CS-pad*2;
+      var s=snake[i],cx=s.x*CS+CS/2,cy=s.y*CS+CS/2;
+      var r=(i===0)?CS/2-1:CS/2-2;
       if(i===0){
         ctx.shadowColor='#00ff88';ctx.shadowBlur=10;
-        ctx.fillStyle='#00ff88';
+        var g=ctx.createRadialGradient(cx,cy,0,cx,cy,r);
+        g.addColorStop(0,'#66ffbb');g.addColorStop(1,'#00cc66');
+        ctx.fillStyle=g;
       }else{
         ctx.shadowBlur=0;
         var t=i/snake.length;
-        ctx.fillStyle='rgb(0,'+Math.floor(100-t*50)+',40)';
+        ctx.fillStyle='rgb(0,'+Math.floor(120-t*60)+',50)';
       }
-      ctx.fillRect(x,y,w,w);
+      ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();
     }
     ctx.shadowBlur=0;
-    // eyes
-    if(snake.length>0&&!run){
-      var h=snake[0],cx=h.x*CS+CS/2,cy=h.y*CS+CS/2;
-      var e1,e2;
-      if(dir==='r'){e1={x:cx+5,y:cy-4};e2={x:cx+5,y:cy+4}}
-      else if(dir==='l'){e1={x:cx-5,y:cy-4};e2={x:cx-5,y:cy+4}}
-      else if(dir==='u'){e1={x:cx-4,y:cy-5};e2={x:cx+4,y:cy-5}}
-      else{e1={x:cx-4,y:cy+5};e2={x:cx+4,y:cy+5}}
-      ctx.fillStyle='#fff';
-      ctx.beginPath();ctx.arc(e1.x,e1.y,2.5,0,Math.PI*2);ctx.fill();
-      ctx.beginPath();ctx.arc(e2.x,e2.y,2.5,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='#111';
-      ctx.beginPath();ctx.arc(e1.x+1,e1.y,1.2,0,Math.PI*2);ctx.fill();
-      ctx.beginPath();ctx.arc(e2.x+1,e2.y,1.2,0,Math.PI*2);ctx.fill();
+  }
+
+  function drawEyes(){
+    if(snake.length===0)return;
+    var h=snake[0],cx=h.x*CS+CS/2,cy=h.y*CS+CS/2;
+    var e1,e2;
+    if(dir==='r'){e1={x:cx+5,y:cy-4};e2={x:cx+5,y:cy+4}}
+    else if(dir==='l'){e1={x:cx-5,y:cy-4};e2={x:cx-5,y:cy+4}}
+    else if(dir==='u'){e1={x:cx-4,y:cy-5};e2={x:cx+4,y:cy-5}}
+    else{e1={x:cx-4,y:cy+5};e2={x:cx+4,y:cy+5}}
+    // white
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(e1.x,e1.y,3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(e2.x,e2.y,3,0,Math.PI*2);ctx.fill();
+    // pupil
+    ctx.fillStyle='#111';
+    ctx.beginPath();ctx.arc(e1.x+(dir==='r'?1:dir==='l'?-1:0),e1.y+(dir==='d'?1:dir==='u'?-1:0),1.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(e2.x+(dir==='r'?1:dir==='l'?-1:0),e2.y+(dir==='d'?1:dir==='u'?-1:0),1.5,0,Math.PI*2);ctx.fill();
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,SZ,SZ);
+    drawGrid();
+    drawFood();
+    drawSnake();
+    if(run)drawEyes();
+  }
+
+  function gameOver(){
+    run=false;paused=false;clearInterval(loop);
+    stEl.textContent='Game Over — '+score;stEl.className='st dead';
+    var isNew=score>hi;
+    if(isNew){
+      hi=score;localStorage.setItem('snakeHi',hi);hiEl.textContent=hi;
+      hiEl.className='hi-new';
+      setTimeout(function(){hiEl.className='';},1500);
     }
+    gscEl.textContent=score;
+    gbestEl.textContent=isNew?'🏆 NEW HIGH SCORE!':'Best: '+hi;
+    gover.className='gover show';
+    draw();
   }
 
   function update(){
@@ -153,14 +205,12 @@ canvas{
     if(head.y<0)head.y=G-1;if(head.y>=G)head.y=0;
     for(var i=0;i<snake.length;i++){
       if(snake[i].x===head.x&&snake[i].y===head.y){
-        run=false;clearInterval(loop);
-        stEl.textContent='Game Over - '+score;stEl.className='st dead';
-        if(score>hi){hi=score;localStorage.setItem('snakeHi',hi);hiEl.textContent=hi;}
-        draw();return;
+        gameOver();return;
       }
     }
+    var ate=(head.x===food.x&&head.y===food.y);
     snake.unshift(head);
-    if(head.x===food.x&&head.y===food.y){
+    if(ate){
       score++;scEl.textContent=score;
       if(score>hi){hi=score;localStorage.setItem('snakeHi',hi);hiEl.textContent=hi;}
       spawn();
@@ -169,32 +219,49 @@ canvas{
     draw();
   }
 
-  function tick(){if(run)update()}
+  function tick(){if(run&&!paused)update()}
+
+  function togglePause(){
+    if(!run)return;
+    paused=!paused;
+    stEl.textContent=paused?'⏸ Paused':'▶ Playing';
+    stEl.className=paused?'st paused':'st on';
+  }
 
   function changeDir(d){
-    if(!run)return;
+    if(!run||paused)return;
     if(opp[d]===dir&&snake.length>1)return;
     nextDir=d;
-    if(stEl.textContent.indexOf('to move')>=0){stEl.textContent='Playing';stEl.className='st on';}
+    if(stEl.textContent.indexOf('to move')>=0||stEl.textContent.indexOf('Paused')>=0){
+      stEl.textContent='▶ Playing';stEl.className='st on';
+    }
   }
 
   function start(){
     if(loop)clearInterval(loop);
     snake=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];
-    dir='r';nextDir='r';score=0;speed=120;run=true;
+    dir='r';nextDir='r';score=0;speed=120;run=true;paused=false;
     scEl.textContent='0';
     stEl.textContent='arrows to move';stEl.className='st';
+    gover.className='gover';
     spawn();draw();
     loop=setInterval(tick,speed);
   }
 
+  // Keyboard
   document.addEventListener('keydown',function(e){
     if(keyMap[e.key]){e.preventDefault();changeDir(keyMap[e.key]);}
+    if(e.key===' '||e.key==='Escape'){e.preventDefault();togglePause();}
+    if((e.key==='r'||e.key==='R')&&!run){e.preventDefault();start();}
   });
 
-  // touch swipe
+  // Touch swipe
   var tx=0,ty=0;
-  c.addEventListener('touchstart',function(e){tx=e.touches[0].clientX;ty=e.touches[0].clientY;},{passive:true});
+  c.addEventListener('touchstart',function(e){
+    tx=e.touches[0].clientX;ty=e.touches[0].clientY;
+    // tap to restart when game over
+    if(!run){start();}
+  },{passive:true});
   c.addEventListener('touchmove',function(e){e.preventDefault();},{passive:false});
   c.addEventListener('touchend',function(e){
     var dx=e.changedTouches[0].clientX-tx,dy=e.changedTouches[0].clientY-ty;
@@ -202,11 +269,18 @@ canvas{
     if(Math.abs(dx)>Math.abs(dy)){changeDir(dx>0?'r':'l')}else{changeDir(dy>0?'d':'u')}
   },{passive:true});
 
+  // D-pad
   document.querySelectorAll('.db').forEach(function(b){
     b.addEventListener('click',function(){changeDir(b.dataset.d)});
+    b.addEventListener('touchstart',function(e){e.preventDefault();changeDir(b.dataset.d);},{passive:false});
   });
 
+  // Restart button
   document.getElementById('rb').addEventListener('click',start);
+
+  // Overlay click to restart
+  gover.addEventListener('click',start);
+
   start();
 })();
 </script>
