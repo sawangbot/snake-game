@@ -20,10 +20,12 @@ body{
 }
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:0 4px}
 .title{font-size:20px;font-weight:700;color:#00ff88;letter-spacing:.5px}
-.sc{font-size:14px;color:#888}
-.sc strong{color:#eee;font-variant-numeric:tabular-nums}
+.stats{display:flex;gap:16px;font-size:14px;color:#888}
+.stats>div{display:flex;align-items:center;gap:4px}
+.stats strong{color:#eee;font-variant-numeric:tabular-nums}
 .hi strong{color:#ffd700;transition:color .3s}
 .hi strong.hi-new{color:#ff4466;animation:pulse .5s ease-in-out 3}
+.tm strong{color:#66ccff}
 @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.3)}}
 canvas{
   display:block;width:400px;height:400px;border-radius:12px;
@@ -51,6 +53,7 @@ canvas{
 .gover.show{display:flex}
 .gover .gtitle{font-size:28px;font-weight:800;color:#ff4466;text-shadow:0 0 30px rgba(255,68,102,.4)}
 .gover .gscore{font-size:16px;color:#ccc;margin-top:4px}
+.gover .gtimer{font-size:13px;color:#66ccff;margin-top:2px}
 .gover .gbest{font-size:14px;color:#ffd700}
 .gover .ghint{font-size:13px;color:#666;margin-top:8px}
 .dpad{display:none;justify-content:center;margin-top:14px}
@@ -66,11 +69,12 @@ canvas{
 .dl{grid-column:1;grid-row:2}
 .dr{grid-column:3;grid-row:2}
 .dd{grid-column:2;grid-row:3}
-@media(max-width:480px){
+@media(max-width:500px){
   .wrap{padding:16px;border-radius:16px}
   canvas{width:300px;height:300px}
   .dpad{display:flex}
-  .top{flex-direction:column;gap:8px}
+  .top{flex-direction:column;gap:6px}
+  .stats{gap:10px;font-size:13px}
 }
 @media(pointer:coarse){.dpad{display:flex}}
 </style>
@@ -79,12 +83,17 @@ canvas{
 <div class="wrap" id="wrap">
   <div class="top">
     <div class="title">SNAKE</div>
-    <div class="sc">Score: <strong id="sc">0</strong> <span class="hi">Best: <strong id="hi">0</strong></span></div>
+    <div class="stats">
+      <div class="sc">Score: <strong id="sc">0</strong></div>
+      <div class="tm">&#9201; <strong id="tm">0:00</strong></div>
+      <div class="hi">Best: <strong id="hi">0</strong></div>
+    </div>
   </div>
   <canvas id="c" width="400" height="400"></canvas>
   <div class="gover" id="gover">
     <div class="gtitle">GAME OVER</div>
     <div class="gscore">Score: <strong id="gsc">0</strong></div>
+    <div class="gtimer">Time: <strong id="gtm">0:00</strong></div>
     <div class="gbest" id="gbest"></div>
     <div class="ghint">Press <b>R</b> or tap Restart</div>
   </div>
@@ -105,9 +114,11 @@ canvas{
 (function(){
   var c=document.getElementById('c'),ctx=c.getContext('2d');
   var scEl=document.getElementById('sc'),hiEl=document.getElementById('hi'),stEl=document.getElementById('st');
+  var tmEl=document.getElementById('tm'),gtmEl=document.getElementById('gtm');
   var gover=document.getElementById('gover'),gscEl=document.getElementById('gsc'),gbestEl=document.getElementById('gbest');
   var G=20,SZ=400,CS=SZ/G;
   var snake,food,dir,nextDir,score,hi,loop,run,speed,paused;
+  var startTime,pausedTime,timerInterval;
 
   hi=parseInt(localStorage.getItem('snakeHi'))||0;hiEl.textContent=hi;
 
@@ -121,6 +132,56 @@ canvas{
     var p;
     do{p=rand()}while(snake.some(function(s){return s.x===p.x&&s.y===p.y}));
     food=p;
+  }
+
+  function fmtTime(sec){
+    var m=Math.floor(sec/60);
+    var s=Math.floor(sec%60);
+    return m+':'+(s<10?'0':'')+s;
+  }
+
+  function updateTimerDisplay(){
+    if(!startTime)return;
+    var now=paused&&pausedTime?pausedTime:Date.now();
+    var elapsed=Math.floor((now-startTime)/1000);
+    tmEl.textContent=fmtTime(elapsed);
+  }
+
+  function startTimer(){
+    startTime=Date.now();
+    pausedTime=null;
+    if(timerInterval)clearInterval(timerInterval);
+    timerInterval=setInterval(updateTimerDisplay,200);
+    updateTimerDisplay();
+  }
+
+  function pauseTimer(){
+    if(pausedTime)return;
+    pausedTime=Date.now();
+    if(timerInterval)clearInterval(timerInterval);
+    timerInterval=null;
+    updateTimerDisplay();
+  }
+
+  function resumeTimer(){
+    if(!pausedTime)return;
+    var pauseDur=Date.now()-pausedTime;
+    startTime+=pauseDur;
+    pausedTime=null;
+    if(timerInterval)clearInterval(timerInterval);
+    timerInterval=setInterval(updateTimerDisplay,200);
+    updateTimerDisplay();
+  }
+
+  function stopTimer(){
+    if(timerInterval)clearInterval(timerInterval);
+    timerInterval=null;
+    if(startTime){
+      var elapsed=Math.floor(((pausedTime||Date.now())-startTime)/1000);
+      gtmEl.textContent=fmtTime(elapsed);
+    }
+    startTime=null;
+    pausedTime=null;
   }
 
   function drawGrid(){
@@ -165,11 +226,9 @@ canvas{
     else if(dir==='l'){e1={x:cx-5,y:cy-4};e2={x:cx-5,y:cy+4}}
     else if(dir==='u'){e1={x:cx-4,y:cy-5};e2={x:cx+4,y:cy-5}}
     else{e1={x:cx-4,y:cy+5};e2={x:cx+4,y:cy+5}}
-    // white
     ctx.fillStyle='#fff';
     ctx.beginPath();ctx.arc(e1.x,e1.y,3,0,Math.PI*2);ctx.fill();
     ctx.beginPath();ctx.arc(e2.x,e2.y,3,0,Math.PI*2);ctx.fill();
-    // pupil
     ctx.fillStyle='#111';
     ctx.beginPath();ctx.arc(e1.x+(dir==='r'?1:dir==='l'?-1:0),e1.y+(dir==='d'?1:dir==='u'?-1:0),1.5,0,Math.PI*2);ctx.fill();
     ctx.beginPath();ctx.arc(e2.x+(dir==='r'?1:dir==='l'?-1:0),e2.y+(dir==='d'?1:dir==='u'?-1:0),1.5,0,Math.PI*2);ctx.fill();
@@ -185,6 +244,7 @@ canvas{
 
   function gameOver(){
     run=false;paused=false;clearInterval(loop);
+    stopTimer();
     stEl.textContent='Game Over — '+score;stEl.className='st dead';
     var isNew=score>hi;
     if(isNew){
@@ -224,8 +284,13 @@ canvas{
   function togglePause(){
     if(!run)return;
     paused=!paused;
-    stEl.textContent=paused?'⏸ Paused':'▶ Playing';
-    stEl.className=paused?'st paused':'st on';
+    if(paused){
+      pauseTimer();
+      stEl.textContent='⏸ Paused';stEl.className='st paused';
+    }else{
+      resumeTimer();
+      stEl.textContent='▶ Playing';stEl.className='st on';
+    }
   }
 
   function changeDir(d){
@@ -239,27 +304,28 @@ canvas{
 
   function start(){
     if(loop)clearInterval(loop);
+    stopTimer();
     snake=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];
     dir='r';nextDir='r';score=0;speed=120;run=true;paused=false;
-    scEl.textContent='0';
+    scEl.textContent='0';tmEl.textContent='0:00';
     stEl.textContent='arrows to move';stEl.className='st';
     gover.className='gover';
     spawn();draw();
+    startTimer();
     loop=setInterval(tick,speed);
   }
 
-  // Keyboard
   document.addEventListener('keydown',function(e){
     if(keyMap[e.key]){e.preventDefault();changeDir(keyMap[e.key]);}
     if(e.key===' '||e.key==='Escape'){e.preventDefault();togglePause();}
     if((e.key==='r'||e.key==='R')&&!run){e.preventDefault();start();}
+    if(e.key==='t'||e.key==='T'){/* reserved for potential time-mode toggle */}
+
   });
 
-  // Touch swipe
   var tx=0,ty=0;
   c.addEventListener('touchstart',function(e){
     tx=e.touches[0].clientX;ty=e.touches[0].clientY;
-    // tap to restart when game over
     if(!run){start();}
   },{passive:true});
   c.addEventListener('touchmove',function(e){e.preventDefault();},{passive:false});
@@ -269,16 +335,12 @@ canvas{
     if(Math.abs(dx)>Math.abs(dy)){changeDir(dx>0?'r':'l')}else{changeDir(dy>0?'d':'u')}
   },{passive:true});
 
-  // D-pad
   document.querySelectorAll('.db').forEach(function(b){
     b.addEventListener('click',function(){changeDir(b.dataset.d)});
     b.addEventListener('touchstart',function(e){e.preventDefault();changeDir(b.dataset.d);},{passive:false});
   });
 
-  // Restart button
   document.getElementById('rb').addEventListener('click',start);
-
-  // Overlay click to restart
   gover.addEventListener('click',start);
 
   start();
